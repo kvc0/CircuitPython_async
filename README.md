@@ -83,3 +83,13 @@ tasko.schedule(hz=100, coroutine_function=rotary.loop)
 tasko.run()
 # ----------  Tasko wiring ends here  ---------- #
 ```
+
+
+## Want to try it out on your microcontroller?
+Cool!  You need to know how to make CircuitPython, since today it's not enabled.  Here are the expert instructions:
+
+* `git remote add wow https://github.com/WarriorOfWire/circuitpython.git`
+* `git fetch wow`
+* `git checkout async_syntax`
+* Make circuitpython for your board and flash it
+* Start writing `async def` and scheduling some coroutines!
