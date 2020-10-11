@@ -4,15 +4,13 @@ import time
 def _yield_once():
     """await the return value of this function to yield the processor"""
     class _CallMeNextTime:
-        def __iter__(self):
+        def __await__(self):
             # This is inside the scheduler where we know generator yield is the
             #   implementation of task switching in CircuitPython.  This throws
             #   control back out through user code and up to the scheduler's
             #   __iter__ stack which will see that we've suspended _current.
             # Don't yield in async methods; only await unless you're making a library.
             yield
-        # so this scheduler also works on CPython
-        __await__ = __iter__
 
     return _CallMeNextTime()
 
@@ -26,10 +24,23 @@ class Sleeper:
     def resume_time(self):
         return self.sleep_start + self.seconds
 
+    def __repr__(self):
+        return '{{Sleeper remaining: {:.2f}, task: {} }}'.format(
+            self.resume_time() - time.monotonic(),
+            self.task
+        )
+
+    __str__ = __repr__
+
 
 class Task:
     def __init__(self, coroutine):
         self.coroutine = coroutine
+
+    def __repr__(self):
+        return '{{Task {}}}'.format(self.coroutine)
+
+    __str__ = __repr__
 
 
 class TaskCanceledException(Exception):
@@ -41,10 +52,14 @@ class Loop:
     It's your task host.  You run() it and it manages your main application loop.
     """
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self._tasks = []
         self._sleeping = []
         self._current = None
+        if debug:
+            self._debug = print
+        else:
+            self._debug = lambda *arg, **kwargs: None
 
     def add_task(self, awaitable_task):
         """
@@ -53,6 +68,7 @@ class Loop:
           scheduler.add_task( my_async_method() )
         :param awaitable_task:  The coroutine to be concurrently driven to completion.
         """
+        self._debug('adding task ', awaitable_task)
         self._tasks.append(Task(awaitable_task))
 
     async def sleep(self, seconds):
@@ -66,6 +82,7 @@ class Loop:
         assert self._current is not None, 'You can only sleep from within a task'
         self._sleeping.append(Sleeper(seconds, self._current))
         self._sleeping.sort(key=Sleeper.resume_time)  # heap would be better but hey.
+        self._debug('sleeping ', self._current)
         self._current = None
         # Pretty subtle here.  This yields once, then it continues next time the task scheduler executes it.
         # The async function is parked at this point.
@@ -112,12 +129,15 @@ class Loop:
         :param event_loop: An event loop that can .sleep() and .add_task.  Like BudgetEventLoop.
         """
         assert coroutine_function is not None, 'coroutine function must not be none'
+        self._debug('scheduling ', coroutine_function, ' at ', hz, 'hz')
 
         async def schedule_at_rate(decorated_async_fn):
             seconds_per_invocation = 1 / hz
             target_run_time = time.monotonic()
             while True:
-                await decorated_async_fn(*args, **kwargs)
+                iteration = decorated_async_fn(*args, **kwargs)
+                self._debug('iteration ', iteration)
+                await iteration
                 target_run_time += seconds_per_invocation
                 seconds_to_wait = target_run_time - time.monotonic()
                 if seconds_to_wait > 0:
@@ -144,9 +164,10 @@ class Loop:
         assert self._current is None, 'Loop can only be advanced by 1 stack frame at a time.'
         while self._tasks or self._sleeping:
             self._step()
-        print('Loop completed')
+        self._debug('Loop completed', self._tasks, self._sleeping)
 
     def _step(self):
+        self._debug('stepping over ', len(self._tasks), ' tasks')
         for _ in range(len(self._tasks)):
             task = self._tasks.pop(0)
             self._run_task(task)
@@ -165,6 +186,7 @@ class Loop:
             sleep_seconds = max(0, next_sleeper.resume_time() - time.monotonic())
             # Give control to the system, there's nothing to be done right now,
             # and nothing else is scheduled to run for this long.
+            self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
             time.sleep(sleep_seconds)
 
     def _run_task(self, task: Task):
@@ -174,12 +196,14 @@ class Loop:
         self._current = task
         try:
             task.coroutine.send(None)
+            self._debug('current', self._current)
             # Sleep gate here, in case the current task suspended.
             # If a sleeping task re-suspends it will have already put itself in the sleeping queue.
             if self._current is not None:
                 self._tasks.append(task)
         except StopIteration:
             # This task is all done.
+            self._debug('task complete')
             pass
         finally:
             self._current = None
