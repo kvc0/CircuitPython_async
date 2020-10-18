@@ -24,10 +24,60 @@ Your tasks could look like:
 * Read status updates from a 3d printer 5 times per second.
 * Read a rotary button 100 times per second.
 
-### You can make a context manager that wraps your SPI bus.
-Maybe you have 2 displays, an SD card and 4 sensors on your bus
-with naught to tell them apart but a CS pin for each.  You can have each thing that needs to use the bus `async with shared_spi as spi:`
-and worry less about scheduling the perfect times to interact with SPI.
+### You can use a context manager that wraps your SPI bus.
+Using `tasko.managed_resource.ManagedResource` you can share an SPI bus between concurrent tasks without explicit
+coordination.
+
+```python
+def setup_spi():
+    from tasko.managed_resource import ManagedResource
+    import digitalio
+    import board
+    # Configure the hardware
+    spi = board.SPI()
+
+    sensor_cs = digitalio.DigitalInOut(board.D4)
+    sensor_cs.direction = digitalio.Direction.OUTPUT
+
+    sdcard_cs = digitalio.DigitalInOut(board.D5)
+    sdcard_cs.direction = digitalio.Direction.OUTPUT
+
+    # Set up acquire/release workflow for the SPI bus
+    def set_active(pin):
+        pin.value = True
+
+    def set_inactive(pin):
+        pin.value = False
+
+    # Configure the physical spi as a managed resource with callbacks that manage the CS pin
+    managed_spi = ManagedResource(spi, on_acquire=set_active, on_release=set_inactive)
+
+    # Get awaitable handles for each CS using this SPI bus
+    sensor_handle = managed_spi.handle(pin=sensor_cs)
+    sdcard_handle = managed_spi.handle(pin=sdcard_cs)
+
+    return sensor_handle, sdcard_handle
+```
+
+And with these configured resource handles you can use them without checking whether anything is busy.  Things will
+efficiently wait when they have to, and charge right on through when there's nothing using the bus currently.
+```python
+async def read_sensor(sensor_handle):
+    async with sensor_handle as bus:
+        # Or, if you're a library author consider taking the handle as an arg
+        # so you can acquire, send, release, --> sleep <--, acquire, read, release
+        # rather than holding the spi for the whole operation
+        await send_and_read_from_sensor(bus)
+
+async def log_to_sdcard(sdcard_handle):
+    async with sdcard_handle as bus:
+        await write_to_sdcard(bus)
+
+sensor_handle, sdcard_handle = setup_spi()
+tasko.schedule(hz=1, read_sensor, sensor_handle)
+tasko.schedule(hz=1/10, log_to_sdcard, sdcard_handle)
+tasko.run()
+```
 
 ### You can do a lot more than this
 Any time you are faced with needing to wait around for something you might be tempted to add state to some class and inspect
@@ -86,10 +136,5 @@ tasko.run()
 
 
 ## Want to try it out on your microcontroller?
-Cool!  You need to know how to make CircuitPython, since today it's not enabled.  Here are the expert instructions:
-
-* `git remote add wow https://github.com/WarriorOfWire/circuitpython.git`
-* `git fetch wow`
-* `git checkout async_syntax`
-* Make circuitpython for your board and flash it
-* Start writing `async def` and scheduling some coroutines!
+Cool!  The `async` and `await` keywords are supported in Circuitpython 6.0.  Unless you are from the future you will
+need to update your microcontroller.  Also, it may be unavailable on your m0 microcontroller because of flash space.
