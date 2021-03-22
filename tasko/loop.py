@@ -16,13 +16,12 @@ def _yield_once():
 
 
 class Sleeper:
-    def __init__(self, seconds, task):
-        self.seconds = seconds
+    def __init__(self, resume_time, task):
         self.task = task
-        self.sleep_start = time.monotonic()
+        self._resume_time = resume_time
 
     def resume_time(self):
-        return self.sleep_start + self.seconds
+        return self._resume_time
 
     def __repr__(self):
         return '{{Sleeper remaining: {:.2f}, task: {} }}'.format(
@@ -79,14 +78,7 @@ class Loop:
 
         :param seconds: Floating point; will wait at least this long to call your task again.
         """
-        assert self._current is not None, 'You can only sleep from within a task'
-        self._sleeping.append(Sleeper(seconds, self._current))
-        self._sleeping.sort(key=Sleeper.resume_time)  # heap would be better but hey.
-        self._debug('sleeping ', self._current)
-        self._current = None
-        # Pretty subtle here.  This yields once, then it continues next time the task scheduler executes it.
-        # The async function is parked at this point.
-        await _yield_once()
+        await self._sleep_until(time.monotonic() + seconds)
 
     def suspend(self):
         """
@@ -138,10 +130,15 @@ class Loop:
                 iteration = decorated_async_fn(*args, **kwargs)
                 self._debug('iteration ', iteration)
                 await iteration
-                target_run_time += seconds_per_invocation
-                seconds_to_wait = target_run_time - time.monotonic()
-                if seconds_to_wait > 0:
-                    await self.sleep(seconds_to_wait)
+                # Try to reschedule for the next window without skew. If we're falling behind,
+                # just go as fast as possible & schedule to run "now." If we catch back up again
+                # we'll return to seconds_per_invocation without doing a bunch of catchup runs.
+                target_run_time = target_run_time + seconds_per_invocation
+                now = time.monotonic()
+                if now <= target_run_time:
+                    await self._sleep_until(target_run_time)
+                else:
+                    target_run_time = now
 
         self.add_task(schedule_at_rate(coroutine_function))
 
@@ -183,11 +180,13 @@ class Loop:
                 break
         if len(self._tasks) == 0 and len(self._sleeping) > 0:
             next_sleeper = self._sleeping[0]
-            sleep_seconds = max(0, next_sleeper.resume_time() - time.monotonic())
-            # Give control to the system, there's nothing to be done right now,
-            # and nothing else is scheduled to run for this long.
-            self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
-            time.sleep(sleep_seconds)
+            sleep_seconds = next_sleeper.resume_time() - time.monotonic()
+            if sleep_seconds > 0:
+                # Give control to the system, there's nothing to be done right now,
+                # and nothing else is scheduled to run for this long.
+                # This is the real sleep. If/when interrupts are implemented this will likely need to change.
+                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
+                time.sleep(sleep_seconds)
 
     def _run_task(self, task: Task):
         """
@@ -207,3 +206,18 @@ class Loop:
             pass
         finally:
             self._current = None
+
+    async def _sleep_until(self, target_run_time):
+        """
+        From within a coroutine, sleeps until the target time.monotonic
+        Returns the thing to await
+        """
+        assert self._current is not None, 'You can only sleep from within a task'
+        self._sleeping.append(Sleeper(target_run_time, self._current))
+        self._sleeping.sort(key=Sleeper.resume_time)  # heap would be better but hey.
+        self._debug('sleeping ', self._current)
+        self._current = None
+        # Pretty subtle here.  This yields once, then it continues next time the task scheduler executes it.
+        # The async function is parked at this point.
+        await _yield_once()
+
