@@ -142,6 +142,23 @@ class Loop:
 
         self.add_task(schedule_at_rate(coroutine_function))
 
+    def schedule_later(self, hz: float, coroutine_function, *args, **kwargs):
+        """
+        Like schedule, but invokes the coroutine_function after the first hz interval.
+
+        See schedule api for parameters.
+        """
+        ran_once = False
+        async def call_later():
+            nonlocal ran_once
+            if ran_once:
+                await coroutine_function(*args, **kwargs)
+            else:
+                await _yield_once()
+                ran_once = True
+
+        return self.schedule(hz, call_later)
+
     def run(self):
         """
         Use:

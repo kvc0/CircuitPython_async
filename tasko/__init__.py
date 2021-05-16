@@ -27,6 +27,7 @@ def get_loop(debug=tasko_logging):
 
 add_task = get_loop().add_task
 schedule = get_loop().schedule
+schedule_later = get_loop().schedule_later
 sleep = get_loop().sleep
 suspend = get_loop().suspend
 
