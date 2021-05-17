@@ -57,9 +57,9 @@ class TestBudgetScheduler(TestCase):
 
         expected_tps = 0
         actual_tps = 0
-        # Assert that all the tasks hit their scheduled count, at least within +-2 iterations.
+        # Assert that all the tasks hit their scheduled count, at least within +-5 iterations.
         for i in range(len(counters)):
-            self.assertAlmostEqual(duration * (3*(i+1) + 5), counters[i], delta=2)
+            self.assertAlmostEqual(duration * (3*(i+1) + 5), counters[i], delta=5)
             expected_tps += (3*(i+1) + 5)
             actual_tps += counters[i]
         actual_tps /= duration
