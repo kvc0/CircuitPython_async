@@ -16,16 +16,16 @@ def _yield_once():
 
 
 class Sleeper:
-    def __init__(self, resume_time, task):
+    def __init__(self, resume_nanos, task):
         self.task = task
-        self._resume_time = resume_time
+        self._resume_nanos = resume_nanos
 
-    def resume_time(self):
-        return self._resume_time
+    def resume_nanos(self):
+        return self._resume_nanos
 
     def __repr__(self):
         return '{{Sleeper remaining: {:.2f}, task: {} }}'.format(
-            self.resume_time() - time.monotonic(),
+            (self.resume_nanos() - time.monotonic_ns()) / 1000000000.0,
             self.task
         )
 
@@ -78,7 +78,7 @@ class Loop:
 
         :param seconds: Floating point; will wait at least this long to call your task again.
         """
-        await self._sleep_until(time.monotonic() + seconds)
+        await self._sleep_until(time.monotonic_ns() + int(seconds * 1000000000) )
 
     def suspend(self):
         """
@@ -124,8 +124,8 @@ class Loop:
         self._debug('scheduling ', coroutine_function, ' at ', hz, 'hz')
 
         async def schedule_at_rate(decorated_async_fn):
-            seconds_per_invocation = 1 / hz
-            target_run_time = time.monotonic()
+            nanoseconds_per_invocation = (1 / hz) * 1000000000
+            target_run_nanos = time.monotonic_ns()
             while True:
                 iteration = decorated_async_fn(*args, **kwargs)
                 self._debug('iteration ', iteration)
@@ -133,12 +133,12 @@ class Loop:
                 # Try to reschedule for the next window without skew. If we're falling behind,
                 # just go as fast as possible & schedule to run "now." If we catch back up again
                 # we'll return to seconds_per_invocation without doing a bunch of catchup runs.
-                target_run_time = target_run_time + seconds_per_invocation
-                now = time.monotonic()
-                if now <= target_run_time:
-                    await self._sleep_until(target_run_time)
+                target_run_nanos = target_run_nanos + nanoseconds_per_invocation
+                now_nanos = time.monotonic_ns()
+                if now_nanos <= target_run_nanos:
+                    await self._sleep_until(target_run_nanos)
                 else:
-                    target_run_time = now
+                    target_run_nanos = now_nanos
 
         self.add_task(schedule_at_rate(coroutine_function))
 
@@ -171,8 +171,8 @@ class Loop:
         # Consider each sleeping function at most once (avoids sleep(0) problems)
         for i in range(len(self._sleeping)):
             sleeper = self._sleeping[0]
-            now = time.monotonic()
-            if now >= sleeper.resume_time():
+            now_nanos = time.monotonic_ns()
+            if now_nanos >= sleeper.resume_nanos():
                 self._sleeping.pop(0)
                 self._run_task(sleeper.task)
             else:
@@ -180,12 +180,13 @@ class Loop:
                 break
         if len(self._tasks) == 0 and len(self._sleeping) > 0:
             next_sleeper = self._sleeping[0]
-            sleep_seconds = next_sleeper.resume_time() - time.monotonic()
-            if sleep_seconds > 0:
+            sleep_nanos = next_sleeper.resume_nanos() - time.monotonic_ns()
+            if sleep_nanos > 0:
                 # Give control to the system, there's nothing to be done right now,
                 # and nothing else is scheduled to run for this long.
                 # This is the real sleep. If/when interrupts are implemented this will likely need to change.
-                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
+                sleep_seconds = sleep_nanos / 1000000000.0
+                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 'ns. \n', self._sleeping)
                 time.sleep(sleep_seconds)
 
     def _run_task(self, task: Task):
@@ -207,14 +208,14 @@ class Loop:
         finally:
             self._current = None
 
-    async def _sleep_until(self, target_run_time):
+    async def _sleep_until(self, target_run_nanos):
         """
-        From within a coroutine, sleeps until the target time.monotonic
+        From within a coroutine, sleeps until the target time.monotonic_ns
         Returns the thing to await
         """
         assert self._current is not None, 'You can only sleep from within a task'
-        self._sleeping.append(Sleeper(target_run_time, self._current))
-        self._sleeping.sort(key=Sleeper.resume_time)  # heap would be better but hey.
+        self._sleeping.append(Sleeper(target_run_nanos, self._current))
+        self._sleeping.sort(key=Sleeper.resume_nanos)  # heap would be better but hey.
         self._debug('sleeping ', self._current)
         self._current = None
         # Pretty subtle here.  This yields once, then it continues next time the task scheduler executes it.
