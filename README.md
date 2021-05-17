@@ -1,6 +1,8 @@
 # tasko
 This is a pure Python concurrency implementation for the async/await language syntax.
 
+![Tests](https://github.com/WarriorOfWire/tasko/actions/workflows/python-tests.yml/badge.svg)
+
 
 ## Loop
 *`while True`, redefined.*
