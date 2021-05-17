@@ -64,3 +64,29 @@ class TestBudgetScheduler(TestCase):
             actual_tps += counters[i]
         actual_tps /= duration
         print('expected tps:', expected_tps, 'actual:', actual_tps)
+    
+    def test_schedule_later(self):
+        control_ticks = 0
+        deferred_ticks = 0
+        deferred_ticked = False
+        loop = Loop(debug=False)
+
+        async def deferred_task():
+            nonlocal deferred_ticked, deferred_ticks
+            deferred_ticks = deferred_ticks + 1
+            deferred_ticked = True
+
+        async def control_ticker():
+            nonlocal control_ticks
+            control_ticks = control_ticks + 1
+
+        loop.schedule(10, control_ticker)
+        loop.schedule_later(1, deferred_task)
+
+        while True:
+            loop._step()
+            if deferred_ticked:
+                break
+
+        self.assertEqual(deferred_ticks, 1)
+        self.assertAlmostEqual(control_ticks, 10, delta=1)
