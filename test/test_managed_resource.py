@@ -1,7 +1,7 @@
 import time
 from unittest import TestCase
 
-from managed_resource import ManagedResource
+from tasko.managed_resource import ManagedResource
 from tasko import Loop
 
 
@@ -47,19 +47,19 @@ class TestManagedResource(TestCase):
         loop._step()  # 1 acquire-work  2 suspend
         # 1 is working with spi on cs1, 2 is suspended waiting.
         self.assertIs(spi.active_cs, 1)
-        self.assertEquals(len(loop._tasks), 1)  # 2 is suspended, not eligible to be run next step
+        self.assertEqual(len(loop._tasks), 1)  # 2 is suspended, not eligible to be run next step
 
         loop._step()  # 1 after context
         self.assertIsNone(spi.active_cs)
-        self.assertEquals(len(loop._tasks), 2)  # 1 is unfinished, 2 is unsuspended by the ManagedResource
+        self.assertEqual(len(loop._tasks), 2)  # 1 is unfinished, 2 is unsuspended by the ManagedResource
 
         loop._step()  # 1 end           2 work
         self.assertIs(spi.active_cs, 2)
-        self.assertEquals(len(loop._tasks), 1)  # 1 is finished, 2 is working with spi on cs2
+        self.assertEqual(len(loop._tasks), 1)  # 1 is finished, 2 is working with spi on cs2
 
         loop._step()  #                 2 after context
         self.assertIsNone(spi.active_cs)
-        self.assertEquals(len(loop._tasks), 1)  # 2 is unfinished
+        self.assertEqual(len(loop._tasks), 1)  # 2 is unfinished
 
         loop._step()  # 2 end
-        self.assertEquals(loop._tasks, [])  # 2 is finished
+        self.assertEqual(loop._tasks, [])  # 2 is finished
