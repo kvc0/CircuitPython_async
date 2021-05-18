@@ -1,3 +1,4 @@
+from tasko.loop import _yield_once
 import time
 from unittest import TestCase
 
@@ -80,8 +81,8 @@ class TestBudgetScheduler(TestCase):
             nonlocal control_ticks
             control_ticks = control_ticks + 1
 
-        loop.schedule(10, control_ticker)
-        loop.schedule_later(1, deferred_task)
+        loop.schedule(100, control_ticker)
+        loop.schedule_later(10, deferred_task)
 
         while True:
             loop._step()
@@ -89,4 +90,24 @@ class TestBudgetScheduler(TestCase):
                 break
 
         self.assertEqual(deferred_ticks, 1)
-        self.assertAlmostEqual(control_ticks, 10, delta=1)
+        self.assertAlmostEqual(control_ticks, 10, delta=2)
+    
+    def test_run_later(self):
+        loop = Loop()
+        count = 0
+
+        async def run_later():
+            nonlocal count
+            while True:
+                count = count + 1
+                await _yield_once()  # For testing
+
+        loop.run_later(seconds_to_delay=0.1, awaitable_task=run_later())
+
+        self.assertEqual(0, count, 'count should not increment upon coroutine instantiation')
+        loop._step()
+        self.assertEqual(0, count, 'count should not increment before waiting long enough')
+        
+        time.sleep(0.1)  # Make sure enough time has passed for step to pick up the task
+        loop._step()
+        self.assertEqual(1, count, 'count should increment once per step')

@@ -81,6 +81,31 @@ tasko.schedule(hz=1/10, log_to_sdcard, sdcard_handle)
 tasko.run()
 ```
 
+### You can run something later
+```python
+pending_sensor = False
+
+async def read_sensor():
+    read_bme680(board.SPI)
+
+async def read_button():
+    nonlocal pending_sensor
+    was_pressed = check_if_button_was_pressed()
+
+    if was_pressed and not pending_sensor:
+        # Read the sensor a second later, you can show UI or something beforehand,
+        # or you could tell the BME680 to warm up its VOC sensor without waiting for it.
+        # You'll still be checking the button at 100hz in the meantime.
+        tasko.run_later(seconds_to_delay=1, read_sensor())
+
+def run():
+    tasko.schedule(hz=100, read_button)
+    tasko.run()
+
+if __name__ == '__main__':
+    run()
+```
+
 ### You can do a lot more than this
 Any time you are faced with needing to wait around for something you might be tempted to add state to some class and inspect
 it up in your main loop(), or "pulse" through your app every loop() to move state forward.

@@ -14,6 +14,8 @@ def _yield_once():
 
     return _CallMeNextTime()
 
+def _get_future_nanos(seconds_in_future):
+    return time.monotonic_ns() + int(seconds_in_future * 1000000000)
 
 class Sleeper:
     def __init__(self, resume_nanos, task):
@@ -78,7 +80,22 @@ class Loop:
 
         :param seconds: Floating point; will wait at least this long to call your task again.
         """
-        await self._sleep_until(time.monotonic_ns() + int(seconds * 1000000000) )
+        await self._sleep_until_nanos(_get_future_nanos(seconds))
+    
+    def run_later(self, seconds_to_delay, awaitable_task):
+        """
+        Add a concurrent task, delayed by some seconds.
+        Use:
+          tasko.run_later( seconds_to_delay=1.2, my_async_method() )
+        :param seconds_to_delay: How long until the task should be kicked off?
+        :param awaitable_task:   The coroutine to be concurrently driven to completion.
+        """
+        # Make sure we don't wait unnecessarily if there are lots of tasks to kick off
+        start_nanos = _get_future_nanos(seconds_to_delay)
+        async def _run_later():
+            await self._sleep_until_nanos(start_nanos)
+            await awaitable_task
+        self.add_task(_run_later())
 
     def suspend(self):
         """
@@ -136,7 +153,7 @@ class Loop:
                 target_run_nanos = target_run_nanos + nanoseconds_per_invocation
                 now_nanos = time.monotonic_ns()
                 if now_nanos <= target_run_nanos:
-                    await self._sleep_until(target_run_nanos)
+                    await self._sleep_until_nanos(target_run_nanos)
                 else:
                     target_run_nanos = now_nanos
 
@@ -225,7 +242,7 @@ class Loop:
         finally:
             self._current = None
 
-    async def _sleep_until(self, target_run_nanos):
+    async def _sleep_until_nanos(self, target_run_nanos):
         """
         From within a coroutine, sleeps until the target time.monotonic_ns
         Returns the thing to await
