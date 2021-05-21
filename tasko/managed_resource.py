@@ -28,7 +28,7 @@ class ManagedResource:
         returns a reusable, reentrant handle to the managed resource.
         args and kwargs are passed to on_acquire and on_release functions you provided with the resource.
         """
-        return ManagedResource.Handle(self, args, kwargs)
+        return Handle(self, args, kwargs)
 
     async def _aenter(self, args, kwargs):
         if self._owned:
@@ -53,17 +53,22 @@ class ManagedResource:
         else:
             self._owned = False
 
-    class Handle:
-        """
-        For binding resource initialization/teardown args to a resource.
-        """
-        def __init__(self, managed_resource, args, kwargs):
-            self._managed_resource = managed_resource
-            self._args = args
-            self._kwargs = kwargs
+class Handle:
+    """
+    For binding resource initialization/teardown args to a resource.
+    """
+    def __init__(self, managed_resource, args, kwargs):
+        self._managed_resource = managed_resource
+        self._args = args
+        self._kwargs = kwargs
+        self.active = False
 
-        async def __aenter__(self):
-            return await self._managed_resource._aenter(self._args, self._kwargs)
+    async def __aenter__(self):
+        resource = await self._managed_resource._aenter(self._args, self._kwargs)
+        self.active = True
+        return resource
 
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return await self._managed_resource._aexit(self._args, self._kwargs)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        resource = await self._managed_resource._aexit(self._args, self._kwargs)
+        self.active = False
+        return resource
