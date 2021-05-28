@@ -1,5 +1,12 @@
 import time
 
+_monotonic_ns = time.monotonic_ns
+
+
+def set_time_provider(monotonic_ns):
+    global _monotonic_ns
+    _monotonic_ns = monotonic_ns
+
 
 def _yield_once():
     """await the return value of this function to yield the processor"""
@@ -15,7 +22,7 @@ def _yield_once():
     return _CallMeNextTime()
 
 def _get_future_nanos(seconds_in_future):
-    return time.monotonic_ns() + int(seconds_in_future * 1000000000)
+    return _monotonic_ns() + int(seconds_in_future * 1000000000)
 
 class Sleeper:
     def __init__(self, resume_nanos, task):
@@ -27,7 +34,7 @@ class Sleeper:
 
     def __repr__(self):
         return '{{Sleeper remaining: {:.2f}, task: {} }}'.format(
-            (self.resume_nanos() - time.monotonic_ns()) / 1000000000.0,
+            (self.resume_nanos() - _monotonic_ns()) / 1000000000.0,
             self.task
         )
 
@@ -40,6 +47,74 @@ class Task:
 
     def __repr__(self):
         return '{{Task {}}}'.format(self.coroutine)
+
+    __str__ = __repr__
+
+
+class ScheduledTask:
+    def change_rate(self, hz):
+        ### Update the task rate to a new frequency ###
+        self._nanoseconds_per_invocation = (1 / hz) * 1000000000
+
+    def stop(self):
+        ### Stop the task (does not interrupt a currently running task) ###
+        self._stop = True
+
+    def start(self):
+        ### Schedule the task (if it's not already scheduled) ###
+        self._stop = False
+        if not self._scheduled_to_run:
+            # Don't double-up the task if it's still in the run list!
+            self._loop.add_task(self._run_at_fixed_rate())
+
+    def __init__(self, loop, hz, forward_async_fn, forward_args, forward_kwargs):
+        self._loop = loop
+        self._forward_async_fn = forward_async_fn
+        self._forward_args = forward_args
+        self._forward_kwargs = forward_kwargs
+        self._nanoseconds_per_invocation = (1 / hz) * 1000000000
+        self._stop = False
+        self._running = False
+        self._scheduled_to_run = False
+
+    async def _run_at_fixed_rate(self):
+        self._scheduled_to_run = True
+        try:
+            target_run_nanos = _monotonic_ns()
+            while True:
+                if self._stop:
+                    return  # Check before running
+
+                iteration = self._forward_async_fn(*self._forward_args, **self._forward_kwargs)
+                self._loop._debug('iteration ', iteration)
+
+                self._running = True
+                try:
+                    await iteration
+                finally:
+                    self._running = False
+
+                if self._stop:
+                    return  # Check before waiting
+
+                # Try to reschedule for the next window without skew. If we're falling behind,
+                # just go as fast as possible & schedule to run "now." If we catch back up again
+                # we'll return to seconds_per_invocation without doing a bunch of catchup runs.
+                target_run_nanos = target_run_nanos + self._nanoseconds_per_invocation
+                now_nanos = _monotonic_ns()
+                if now_nanos <= target_run_nanos:
+                    await self._loop._sleep_until_nanos(target_run_nanos)
+                else:
+                    target_run_nanos = now_nanos
+                    # Allow other tasks a chance to run if this task is too slow.
+                    await _yield_once()
+        finally:
+            self._scheduled_to_run = False
+
+    def __repr__(self):
+        hz = 1 / (self._nanoseconds_per_invocation / 1000000000)
+        state = 'running' if self._running else 'waiting'
+        return '{{ScheduledTask {} rate: {}hz, fn: {}}}'.format(state, hz, self._forward_async_fn)
 
     __str__ = __repr__
 
@@ -130,7 +205,7 @@ class Loop:
         usage:
           async def main_loop:
             await your_code()
-          get_loop().schedule(hz=100, coroutine_function=main_loop)
+          scheduled_task = get_loop().schedule(hz=100, coroutine_function=main_loop)
           get_loop().run()
 
         :param hz: How many times per second should the function run?
@@ -138,26 +213,9 @@ class Loop:
         :param event_loop: An event loop that can .sleep() and .add_task.  Like BudgetEventLoop.
         """
         assert coroutine_function is not None, 'coroutine function must not be none'
-        self._debug('scheduling ', coroutine_function, ' at ', hz, 'hz')
-
-        async def schedule_at_rate(decorated_async_fn):
-            nanoseconds_per_invocation = (1 / hz) * 1000000000
-            target_run_nanos = time.monotonic_ns()
-            while True:
-                iteration = decorated_async_fn(*args, **kwargs)
-                self._debug('iteration ', iteration)
-                await iteration
-                # Try to reschedule for the next window without skew. If we're falling behind,
-                # just go as fast as possible & schedule to run "now." If we catch back up again
-                # we'll return to seconds_per_invocation without doing a bunch of catchup runs.
-                target_run_nanos = target_run_nanos + nanoseconds_per_invocation
-                now_nanos = time.monotonic_ns()
-                if now_nanos <= target_run_nanos:
-                    await self._sleep_until_nanos(target_run_nanos)
-                else:
-                    target_run_nanos = now_nanos
-
-        self.add_task(schedule_at_rate(coroutine_function))
+        task = ScheduledTask(self, hz, coroutine_function, args, kwargs)
+        task.start()
+        return task
 
     def schedule_later(self, hz: float, coroutine_function, *args, **kwargs):
         """
@@ -205,7 +263,7 @@ class Loop:
         # Consider each sleeping function at most once (avoids sleep(0) problems)
         for i in range(len(self._sleeping)):
             sleeper = self._sleeping[0]
-            now_nanos = time.monotonic_ns()
+            now_nanos = _monotonic_ns()
             if now_nanos >= sleeper.resume_nanos():
                 self._sleeping.pop(0)
                 self._run_task(sleeper.task)
@@ -214,7 +272,7 @@ class Loop:
                 break
         if len(self._tasks) == 0 and len(self._sleeping) > 0:
             next_sleeper = self._sleeping[0]
-            sleep_nanos = next_sleeper.resume_nanos() - time.monotonic_ns()
+            sleep_nanos = next_sleeper.resume_nanos() - _monotonic_ns()
             if sleep_nanos > 0:
                 # Give control to the system, there's nothing to be done right now,
                 # and nothing else is scheduled to run for this long.

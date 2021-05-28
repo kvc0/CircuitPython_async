@@ -1,11 +1,11 @@
-from tasko.loop import _yield_once
+from tasko.loop import _yield_once, set_time_provider
 import time
 from unittest import TestCase
 
 from tasko import Loop
 
 
-class TestBudgetScheduler(TestCase):
+class TestLoop(TestCase):
     def test_add_task(self):
         loop = Loop()
         ran = False
@@ -30,6 +30,52 @@ class TestBudgetScheduler(TestCase):
         while not complete and time.monotonic() - start < 1:
             loop._step()
         self.assertTrue(complete)
+
+    def test_reschedule(self):
+        now = 0
+        def nanos():
+            nonlocal now
+            return now
+
+        set_time_provider(nanos)
+        try:
+            loop = Loop()
+            run_count = 0
+
+            async def foo():
+                nonlocal run_count
+                run_count += 1
+            scheduled_task = loop.schedule(1000000000, foo)
+
+            now = 2
+            self.assertEqual(0, run_count, 'did not run before step')
+            loop._step()
+            self.assertEqual(1, run_count, 'ran only once during step')
+
+            now = 4
+            scheduled_task.stop()
+            loop._step()
+            self.assertEqual(1, run_count, 'does not run again while stopped')
+
+            now = 6
+            scheduled_task.start()
+            loop._step()
+            self.assertEqual(2, run_count, 'runs again after restarting')
+
+            now = 7
+            scheduled_task.change_rate(1000000000 / 10)
+            loop._step()
+            self.assertEqual(3, run_count, 'this run was already scheduled. the next one will be at 10-step')
+
+            now = 16
+            loop._step()
+            self.assertEqual(3, run_count, 'expect to run after 10 has passed')
+
+            now = 17
+            loop._step()
+            self.assertEqual(4, run_count, 'new schedule rate ran')
+        finally:
+            set_time_provider(time.monotonic_ns)
 
     def test_schedule_rate(self):
         # Checks a bunch of scheduled tasks to make sure they hit their target fixed rate schedule.

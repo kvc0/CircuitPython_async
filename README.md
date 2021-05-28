@@ -73,11 +73,19 @@ async def read_sensor(sensor_handle):
 
 async def log_to_sdcard(sdcard_handle):
     async with sdcard_handle as bus:
-        await write_to_sdcard(bus)
+        bytes_written = await write_to_sdcard(bus)
+
+    # You can update the frequency of the task based on whatever you want
+    # to focus your processor time on what currently matters.
+    # stop() and start() can help you toggle whole aspects of your application.
+    if bytes_written == 0:
+        sd_log_scheduled_task.change_rate(hz=1/10)
+    else:
+        sd_log_scheduled_task.change_rate(hz=10)
 
 sensor_handle, sdcard_handle = setup_spi()
 tasko.schedule(hz=1, read_sensor, sensor_handle)
-tasko.schedule(hz=1/10, log_to_sdcard, sdcard_handle)
+sd_log_scheduled_task = tasko.schedule(hz=1/10, log_to_sdcard, sdcard_handle)
 tasko.run()
 ```
 
