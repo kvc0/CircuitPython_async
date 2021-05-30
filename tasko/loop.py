@@ -278,7 +278,7 @@ class Loop:
                 # and nothing else is scheduled to run for this long.
                 # This is the real sleep. If/when interrupts are implemented this will likely need to change.
                 sleep_seconds = sleep_nanos / 1000000000.0
-                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 'ns. \n', self._sleeping)
+                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
                 time.sleep(sleep_seconds)
 
     def _run_task(self, task: Task):
