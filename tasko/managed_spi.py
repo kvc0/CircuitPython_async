@@ -1,6 +1,7 @@
 from .managed_resource import ManagedResource
 import tasko
 
+
 class ManagedSpi:
     def __init__(self, spi_bus, loop=tasko.get_loop()):
         """
@@ -8,11 +9,13 @@ class ManagedSpi:
         """
         self._resource = ManagedResource(spi_bus, on_acquire=self._acquire_spi, on_release=self._release_spi, loop=loop)
         self._handles = {}
-    
-    def _acquire_spi(self, chip_select):
+
+    @staticmethod
+    def _acquire_spi(chip_select):
         chip_select.value = False
 
-    def _release_spi(self, chip_select):
+    @staticmethod
+    def _release_spi(chip_select):
         chip_select.value = True
     
     def cs_handle(self, chip_select):

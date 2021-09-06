@@ -53,6 +53,7 @@ class ManagedResource:
         else:
             self._owned = False
 
+
 class Handle:
     """
     For binding resource initialization/teardown args to a resource.

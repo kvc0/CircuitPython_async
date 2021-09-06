@@ -1,5 +1,7 @@
 import time
 
+import tasko.tasko_time
+
 _monotonic_ns = time.monotonic_ns
 
 
@@ -21,8 +23,10 @@ def _yield_once():
 
     return _CallMeNextTime()
 
+
 def _get_future_nanos(seconds_in_future):
     return _monotonic_ns() + int(seconds_in_future * 1000000000)
+
 
 class Sleeper:
     def __init__(self, resume_nanos, task):
@@ -52,27 +56,31 @@ class Task:
 
 
 class ScheduledTask:
-    def change_rate(self, hz):
-        ### Update the task rate to a new frequency ###
+    def change_rate(self, hz_or_duration_interval):
+        """ Update the task rate to a new frequency. Can also take a tasko_time.Duration """
+        if hz_or_duration_interval is tasko.tasko_time.Duration:
+            hz = hz_or_duration_interval.as_frequency()
+        else:
+            hz = hz_or_duration_interval
         self._nanoseconds_per_invocation = (1 / hz) * 1000000000
 
     def stop(self):
-        ### Stop the task (does not interrupt a currently running task) ###
+        """ Stop the task (does not interrupt a currently running task) """
         self._stop = True
 
     def start(self):
-        ### Schedule the task (if it's not already scheduled) ###
+        """ Schedule the task (if it's not already scheduled) """
         self._stop = False
         if not self._scheduled_to_run:
             # Don't double-up the task if it's still in the run list!
             self._loop.add_task(self._run_at_fixed_rate())
 
-    def __init__(self, loop, hz, forward_async_fn, forward_args, forward_kwargs):
+    def __init__(self, loop, nanoseconds_per_invocation, forward_async_fn, forward_args, forward_kwargs):
         self._loop = loop
         self._forward_async_fn = forward_async_fn
         self._forward_args = forward_args
         self._forward_kwargs = forward_kwargs
-        self._nanoseconds_per_invocation = (1 / hz) * 1000000000
+        self._nanoseconds_per_invocation = nanoseconds_per_invocation
         self._stop = False
         self._running = False
         self._scheduled_to_run = False
@@ -105,7 +113,9 @@ class ScheduledTask:
                 if now_nanos <= target_run_nanos:
                     await self._loop._sleep_until_nanos(target_run_nanos)
                 else:
-                    target_run_nanos = now_nanos
+                    if now_nanos - target_run_nanos > 2 * self._nanoseconds_per_invocation:
+                        # Only break the schedule if we fall behind by too much.
+                        target_run_nanos = now_nanos
                     # Allow other tasks a chance to run if this task is too slow.
                     await _yield_once()
         finally:
@@ -191,7 +201,7 @@ class Loop:
         self._current = None
         return _yield_once(), resume
 
-    def schedule(self, hz: float, coroutine_function, *args, **kwargs):
+    def schedule(self, hz_or_duration_interval, coroutine_function, *args, **kwargs):
         """
         Describe how often a method should be called.
 
@@ -208,12 +218,16 @@ class Loop:
           scheduled_task = get_loop().schedule(hz=100, coroutine_function=main_loop)
           get_loop().run()
 
-        :param hz: How many times per second should the function run?
+        :param hz_or_duration_interval: How many times per second should the function run? (can be float or tasko_time.Duration)
         :param coroutine_function: the async def function you want invoked on your schedule
         :param event_loop: An event loop that can .sleep() and .add_task.  Like BudgetEventLoop.
         """
         assert coroutine_function is not None, 'coroutine function must not be none'
-        task = ScheduledTask(self, hz, coroutine_function, args, kwargs)
+        if isinstance(hz_or_duration_interval, tasko.tasko_time.Duration):
+            nanoseconds_per_invocation = hz_or_duration_interval.as_nanoseconds()
+        else:
+            nanoseconds_per_invocation = (1 / hz_or_duration_interval) * 1000000000
+        task = ScheduledTask(self, nanoseconds_per_invocation, coroutine_function, args, kwargs)
         task.start()
         return task
 

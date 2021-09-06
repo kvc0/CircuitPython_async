@@ -79,13 +79,13 @@ async def log_to_sdcard(sdcard_handle):
     # to focus your processor time on what currently matters.
     # stop() and start() can help you toggle whole aspects of your application.
     if bytes_written == 0:
-        sd_log_scheduled_task.change_rate(hz=1/10)
+        sd_log_scheduled_task.change_rate(Duration.of_seconds(10))
     else:
-        sd_log_scheduled_task.change_rate(hz=10)
+        sd_log_scheduled_task.change_rate(Duration.of_milliseconds(100))
 
 sensor_handle, sdcard_handle = setup_spi()
-tasko.schedule(hz=1, read_sensor, sensor_handle)
-sd_log_scheduled_task = tasko.schedule(hz=1/10, log_to_sdcard, sdcard_handle)
+tasko.schedule(Duration.of_seconds(1), read_sensor, sensor_handle)
+sd_log_scheduled_task = tasko.schedule(Duration.of_seconds(10), log_to_sdcard, sdcard_handle)
 tasko.run()
 ```
 
@@ -107,7 +107,7 @@ async def read_button():
         tasko.run_later(seconds_to_delay=1, read_sensor())
 
 def run():
-    tasko.schedule(hz=100, read_button)
+    tasko.schedule(Duration.of_milliseconds(10), read_button)
     tasko.run()
 
 if __name__ == '__main__':
@@ -159,10 +159,10 @@ rotary = RotaryButton()
 
 # ---------- Tasko wiring begins here ---------- #
 # Schedule the workflows at whatever frequency makes sense
-tasko.schedule(hz=10,  coroutine_function=read_sensor)
-tasko.schedule(hz=10,  coroutine_function=animate_beach_ball)
-tasko.schedule(hz=5,   corouting_function=read_from_3d_printer)
-tasko.schedule(hz=100, coroutine_function=rotary.loop)
+tasko.schedule(Duration.of_milliseconds(100), coroutine_function=read_sensor)
+tasko.schedule(Duration.of_milliseconds(100), coroutine_function=animate_beach_ball)
+tasko.schedule(Duration.of_milliseconds(200), corouting_function=read_from_3d_printer)
+tasko.schedule(Duration.of_milliseconds(10), coroutine_function=rotary.loop)
 
 # And let tasko do while True
 tasko.run()

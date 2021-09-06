@@ -1,8 +1,10 @@
+import tasko.loop
 from tasko.loop import _yield_once, set_time_provider
 import time
 from unittest import TestCase
 
 from tasko import Loop
+from tasko.tasko_time import Duration
 
 
 class TestLoop(TestCase):
@@ -81,13 +83,13 @@ class TestLoop(TestCase):
         # Checks a bunch of scheduled tasks to make sure they hit their target fixed rate schedule.
         # Pathological scheduling sees these tasks barge in front of others all the time. Many run
         # at a fairly high frequency.
-        #
-        # 98 tasks => 15khz throughput tested.
-        #   Works reliably on macbook pro; microcontroller throughput will be.. somewhat less.
 
         loop = Loop(debug=False)
         duration = 1  # Seconds to run the scheduler. (try with 10s if you suspect scheduler drift)
-        tasks = 96    # How many tasks (higher indexes count faster. 96th task => 293hz)
+        tasks = 110    # How many tasks (higher indexes count faster. 110th index goes 100hz)
+
+        def timer(index):
+            return Duration.of_milliseconds(120 - index)
 
         counters = []
         for i in range(tasks):
@@ -96,18 +98,21 @@ class TestLoop(TestCase):
 
             counters.append(0)
 
-            loop.schedule(3 * (i + 1) + 5, f, i)
+            loop.schedule(timer(i), f, i)
 
-        start = time.monotonic()
-        while time.monotonic() - start < duration:
+        start = time.perf_counter()
+        end = start
+        while end - start < duration:
             loop._step()
+            end = time.perf_counter()
+        print()
 
         expected_tps = 0
         actual_tps = 0
         # Assert that all the tasks hit their scheduled count, at least within +-5 iterations.
         for i in range(len(counters)):
-            self.assertAlmostEqual(duration * (3*(i+1) + 5), counters[i], delta=5)
-            expected_tps += (3*(i+1) + 5)
+            self.assertAlmostEqual(duration * timer(i).as_frequency(), counters[i], delta=2)
+            expected_tps += timer(i).as_frequency()
             actual_tps += counters[i]
         actual_tps /= duration
         print('expected tps:', expected_tps, 'actual:', actual_tps)
