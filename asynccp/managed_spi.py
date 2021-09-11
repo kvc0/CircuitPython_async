@@ -1,9 +1,9 @@
 from .managed_resource import ManagedResource
-import tasko
+import asynccp
 
 
 class ManagedSpi:
-    def __init__(self, spi_bus, loop=tasko.get_loop()):
+    def __init__(self, spi_bus, loop=asynccp.get_loop()):
         """
         Vends access to an SPI bus via chip select leases.
         """

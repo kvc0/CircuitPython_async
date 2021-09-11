@@ -1,38 +1,91 @@
-# tasko
-This is a pure Python concurrency implementation for the async/await language syntax.
+# CircuitPython_async
+![Tests](https://github.com/WarriorOfWire/CircuitPython_async/actions/workflows/python-tests.yml/badge.svg)
 
-![Tests](https://github.com/WarriorOfWire/tasko/actions/workflows/python-tests.yml/badge.svg)
+## About
+Pure Python cooperative multitasking implementation for the async/await language syntax.
+
+Loosely modeled after CPython's standard `asyncio`; focused on CircuitPython.
+
+Typically, when you need to wait around for something you have to choose between just doing time.sleep() and
+having a hitch in your app OR manually interleaving tasks and tracking their state & timers.
+
+`asynccp` interleaves your tasks at `await` points in the same general way as `asyncio` does on regular python.
+Instead of blocking with `time.sleep()` you'll `await asynccp.delay()` to let the microcontroller work on other
+things.
+
+## Examples
+### Plain synchronous loop task with async support
+```python
+import asynccp
 
 
-## Loop
-*`while True`, redefined.*
-
-* lets you schedule tasks that may take a long time without making special state machines for them.
-* supports non-blocking sleep() for tasks.
-* calls `time.sleep()` for a microcontroller-friendly lower power sleep when there's nothing to do.
-
-[Loop Source](tasko/loop.py)
+async def read_some_sensor(self):
+    pass
 
 
-## What can I do with this
+async def check_button(self):
+    pass
 
-### You can make your entire app asynchronous.
 
-Your tasks could look like:
-* Set `reading_sensor` to True
-  * Send a message over I2C to a sensor telling it to do an environment sample and sleep 1 second (takes 1 second to read)
-  * Update in-memory state of your current sensor reading and sleep for 10 seconds.
-* Update "loading" beach ball displayio animation 10 times per second while `reading_sensor`
-* Read status updates from a 3d printer 5 times per second.
-* Read a rotary button 100 times per second.
+async def update_display(self):
+    pass
 
-### You can use a context manager that wraps your SPI bus.
-Using `tasko.managed_resource.ManagedResource` you can share an SPI bus between concurrent tasks without explicit
+
+async def loop():
+    await read_some_sensor()
+    await check_button()
+    await update_display()
+
+
+def run():
+    asynccp.add_task(loop())
+    asynccp.run()
+
+
+if __name__ == '__main__':
+    run()
+```
+
+### Scheduled app instead of loop
+```python
+import asynccp
+import asynccp.time.Duration as Duration
+
+class App:
+    def __init__(self):
+        self.button_state = 0
+        self.sensor_state = 0
+
+    async def read_some_sensor(self):
+        pass
+
+    async def check_button(self):
+        pass
+
+    async def update_display(self):
+        pass
+
+
+def run():
+    app = App()
+
+    asynccp.schedule(frequency=Duration.of_seconds(5), coroutine_function=app.read_some_sensor)
+    asynccp.schedule(frequency=80, coroutine_function=app.check_button)
+    asynccp.schedule(frequency=15, coroutine_function=app.update_display)
+    asynccp.run()
+
+
+if __name__ == '__main__':
+    run()
+```
+
+### Multiplex SPI bus without manual coordination
+Using `asynccp.managed_resource.ManagedResource` you can share an SPI bus between concurrent tasks without explicit
 coordination.
 
 ```python
 def setup_spi():
-    from tasko.managed_resource import ManagedResource
+    from asynccp.managed_resource import ManagedResource
     import digitalio
     import board
     # Configure the hardware
@@ -66,65 +119,28 @@ efficiently wait when they have to, and charge right on through when there's not
 ```python
 async def read_sensor(sensor_handle):
     async with sensor_handle as bus:
-        # Or, if you're a library author consider taking the handle as an arg
-        # so you can acquire, send, release, --> sleep <--, acquire, read, release
-        # rather than holding the spi for the whole operation
-        await send_and_read_from_sensor(bus)
+        await send_read_request_to_sensor(bus)
+        # Consider a BME680 which needs a delay before reading the requested result.
+        # Let's let something else use the bus while it's waiting
+    await asynccp.delay(seconds=0.1)
+    async with sensor_handle as bus:
+        return await read_result_from_sensor(bus)
 
 async def log_to_sdcard(sdcard_handle):
     async with sdcard_handle as bus:
         bytes_written = await write_to_sdcard(bus)
 
-    # You can update the frequency of the task based on whatever you want
-    # to focus your processor time on what currently matters.
-    # stop() and start() can help you toggle whole aspects of your application.
-    if bytes_written == 0:
-        sd_log_scheduled_task.change_rate(Duration.of_seconds(10))
-    else:
-        sd_log_scheduled_task.change_rate(Duration.of_milliseconds(100))
-
 sensor_handle, sdcard_handle = setup_spi()
-tasko.schedule(Duration.of_seconds(1), read_sensor, sensor_handle)
-sd_log_scheduled_task = tasko.schedule(Duration.of_seconds(10), log_to_sdcard, sdcard_handle)
-tasko.run()
+asynccp.schedule(Duration.of_milliseconds(123), read_sensor, sensor_handle)
+sd_log_scheduled_task = asynccp.schedule(Duration.of_seconds(1.5), log_to_sdcard, sdcard_handle)
+asynccp.run()
 ```
-
-### You can run something later
-```python
-pending_sensor = False
-
-async def read_sensor():
-    read_bme680(board.SPI)
-
-async def read_button():
-    nonlocal pending_sensor
-    was_pressed = check_if_button_was_pressed()
-
-    if was_pressed and not pending_sensor:
-        # Read the sensor a second later, you can show UI or something beforehand,
-        # or you could tell the BME680 to warm up its VOC sensor without waiting for it.
-        # You'll still be checking the button at 100hz in the meantime.
-        tasko.run_later(seconds_to_delay=1, read_sensor())
-
-def run():
-    tasko.schedule(Duration.of_milliseconds(10), read_button)
-    tasko.run()
-
-if __name__ == '__main__':
-    run()
-```
-
-### You can do a lot more than this
-Any time you are faced with needing to wait around for something you might be tempted to add state to some class and inspect
-it up in your main loop(), or "pulse" through your app every loop() to move state forward.
-
-You could instead consider `await`ing the condition you need to be fulfilled; be it time or something else.
 
 ## Some toy example code
 Uses [this library](https://github.com/WarriorOfWire/circuitpython-utilities/blob/master/cpy_rotary/README.md) for the rotary button
 
 ```python
-import tasko
+import asynccp
 from cpy_rotary import RotaryButton
 
 
@@ -138,7 +154,7 @@ async def read_sensor():
     reading_sensor = True
     try:
         i2c.send(payload)
-        await tasko.sleep(1)  # Don't block your loading beach ball while the sensor is sensing.
+        await asynccp.delay(1)  # Don't block your loading beach ball while the sensor is sensing.
         i2c.read(payload)  # if you have some buffered i2c thing
     finally:
         reading_sensor = False
@@ -157,16 +173,16 @@ async def read_from_3d_printer():
 rotary = RotaryButton()
 
 
-# ---------- Tasko wiring begins here ---------- #
+# ---------- asynccp wiring begins here ---------- #
 # Schedule the workflows at whatever frequency makes sense
-tasko.schedule(Duration.of_milliseconds(100), coroutine_function=read_sensor)
-tasko.schedule(Duration.of_milliseconds(100), coroutine_function=animate_beach_ball)
-tasko.schedule(Duration.of_milliseconds(200), corouting_function=read_from_3d_printer)
-tasko.schedule(Duration.of_milliseconds(10), coroutine_function=rotary.loop)
+asynccp.schedule(Duration.of_milliseconds(100), coroutine_function=read_sensor)
+asynccp.schedule(Duration.of_milliseconds(100), coroutine_function=animate_beach_ball)
+asynccp.schedule(Duration.of_milliseconds(200), corouting_function=read_from_3d_printer)
+asynccp.schedule(Duration.of_milliseconds(10), coroutine_function=rotary.loop)
 
-# And let tasko do while True
-tasko.run()
-# ----------  Tasko wiring ends here  ---------- #
+# And let asynccp do while True
+asynccp.run()
+# ----------  asynccp wiring ends here  ---------- #
 ```
 
 

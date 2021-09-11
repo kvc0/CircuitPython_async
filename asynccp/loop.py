@@ -1,6 +1,6 @@
 import time
 
-import tasko.tasko_time
+import asynccp.time
 
 _monotonic_ns = time.monotonic_ns
 
@@ -28,7 +28,7 @@ def _get_future_nanos(seconds_in_future):
     return _monotonic_ns() + int(seconds_in_future * 1000000000)
 
 
-class Sleeper:
+class Delayer:
     def __init__(self, resume_nanos, task):
         self.task = task
         self._resume_nanos = resume_nanos
@@ -37,7 +37,7 @@ class Sleeper:
         return self._resume_nanos
 
     def __repr__(self):
-        return '{{Sleeper remaining: {:.2f}, task: {} }}'.format(
+        return '{{Delayer remaining: {:.2f}, task: {} }}'.format(
             (self.resume_nanos() - _monotonic_ns()) / 1000000000.0,
             self.task
         )
@@ -56,12 +56,12 @@ class Task:
 
 
 class ScheduledTask:
-    def change_rate(self, hz_or_duration_interval):
-        """ Update the task rate to a new frequency. Can also take a tasko_time.Duration """
-        if hz_or_duration_interval is tasko.tasko_time.Duration:
-            hz = hz_or_duration_interval.as_frequency()
+    def change_rate(self, frequency):
+        """ Update the task rate to a new frequency. Float hz or asynccp.time.Duration interval """
+        if isinstance(frequency, asynccp.time.Duration):
+            hz = frequency.as_frequency()
         else:
-            hz = hz_or_duration_interval
+            hz = frequency
         self._nanoseconds_per_invocation = (1 / hz) * 1000000000
 
     def stop(self):
@@ -111,7 +111,7 @@ class ScheduledTask:
                 target_run_nanos = target_run_nanos + self._nanoseconds_per_invocation
                 now_nanos = _monotonic_ns()
                 if now_nanos <= target_run_nanos:
-                    await self._loop._sleep_until_nanos(target_run_nanos)
+                    await self._loop._delay_until_nanos(target_run_nanos)
                 else:
                     if now_nanos - target_run_nanos > 2 * self._nanoseconds_per_invocation:
                         # Only break the schedule if we fall behind by too much.
@@ -140,7 +140,7 @@ class Loop:
 
     def __init__(self, debug=False):
         self._tasks = []
-        self._sleeping = []
+        self._delaying = []
         self._current = None
         if debug:
             self._debug = print
@@ -157,7 +157,7 @@ class Loop:
         self._debug('adding task ', awaitable_task)
         self._tasks.append(Task(awaitable_task))
 
-    async def sleep(self, seconds):
+    async def delay(self, seconds):
         """
         From within a coroutine, this suspends your call stack for some amount of time.
 
@@ -165,20 +165,20 @@ class Loop:
 
         :param seconds: Floating point; will wait at least this long to call your task again.
         """
-        await self._sleep_until_nanos(_get_future_nanos(seconds))
+        await self._delay_until_nanos(_get_future_nanos(seconds))
     
     def run_later(self, seconds_to_delay, awaitable_task):
         """
         Add a concurrent task, delayed by some seconds.
         Use:
-          tasko.run_later( seconds_to_delay=1.2, my_async_method() )
+          asynccp.run_later( seconds_to_delay=1.2, my_async_method() )
         :param seconds_to_delay: How long until the task should be kicked off?
         :param awaitable_task:   The coroutine to be concurrently driven to completion.
         """
         # Make sure we don't wait unnecessarily if there are lots of tasks to kick off
         start_nanos = _get_future_nanos(seconds_to_delay)
         async def _run_later():
-            await self._sleep_until_nanos(start_nanos)
+            await self._delay_until_nanos(start_nanos)
             await awaitable_task
         self.add_task(_run_later())
 
@@ -201,7 +201,7 @@ class Loop:
         self._current = None
         return _yield_once(), resume
 
-    def schedule(self, hz_or_duration_interval, coroutine_function, *args, **kwargs):
+    def schedule(self, frequency, coroutine_function, *args, **kwargs):
         """
         Describe how often a method should be called.
 
@@ -215,18 +215,17 @@ class Loop:
         usage:
           async def main_loop:
             await your_code()
-          scheduled_task = get_loop().schedule(hz=100, coroutine_function=main_loop)
+          scheduled_task = get_loop().schedule(frequency=100, coroutine_function=main_loop)
           get_loop().run()
 
-        :param hz_or_duration_interval: How many times per second should the function run? (can be float or tasko_time.Duration)
+        :param frequency: frequency-like - How many times per second should the function run? (float hz or asynccp.Duration)
         :param coroutine_function: the async def function you want invoked on your schedule
-        :param event_loop: An event loop that can .sleep() and .add_task.  Like BudgetEventLoop.
         """
         assert coroutine_function is not None, 'coroutine function must not be none'
-        if isinstance(hz_or_duration_interval, tasko.tasko_time.Duration):
-            nanoseconds_per_invocation = hz_or_duration_interval.as_nanoseconds()
+        if isinstance(frequency, asynccp.time.Duration):
+            nanoseconds_per_invocation = frequency.as_nanoseconds()
         else:
-            nanoseconds_per_invocation = (1 / hz_or_duration_interval) * 1000000000
+            nanoseconds_per_invocation = (1 / frequency) * 1000000000
         task = ScheduledTask(self, nanoseconds_per_invocation, coroutine_function, args, kwargs)
         task.start()
         return task
@@ -265,46 +264,46 @@ class Loop:
         Other Exceptions that reach the runner break out, stopping your app and showing a stack trace.
         """
         assert self._current is None, 'Loop can only be advanced by 1 stack frame at a time.'
-        while self._tasks or self._sleeping:
+        while self._tasks or self._delaying:
             self._step()
-        self._debug('Loop completed', self._tasks, self._sleeping)
+        self._debug('Loop completed', self._tasks, self._delaying)
 
     def _step(self):
         self._debug('stepping over ', len(self._tasks), ' tasks')
         for _ in range(len(self._tasks)):
             task = self._tasks.pop(0)
             self._run_task(task)
-        # Consider each sleeping function at most once (avoids sleep(0) problems)
-        for i in range(len(self._sleeping)):
-            sleeper = self._sleeping[0]
+        # Consider each delaying function at most once (avoids sleep(0) problems)
+        for i in range(len(self._delaying)):
+            delayed_task = self._delaying[0]
             now_nanos = _monotonic_ns()
-            if now_nanos >= sleeper.resume_nanos():
-                self._sleeping.pop(0)
-                self._run_task(sleeper.task)
+            if now_nanos >= delayed_task.resume_nanos():
+                self._delaying.pop(0)
+                self._run_task(delayed_task.task)
             else:
                 # We didn't pop the task and it wasn't time to run it.  Only later tasks past this one.
                 break
-        if len(self._tasks) == 0 and len(self._sleeping) > 0:
-            next_sleeper = self._sleeping[0]
-            sleep_nanos = next_sleeper.resume_nanos() - _monotonic_ns()
-            if sleep_nanos > 0:
+        if len(self._tasks) == 0 and len(self._delaying) > 0:
+            next_delayed_task = self._delaying[0]
+            delay_nanos = next_delayed_task.resume_nanos() - _monotonic_ns()
+            if delay_nanos > 0:
                 # Give control to the system, there's nothing to be done right now,
                 # and nothing else is scheduled to run for this long.
                 # This is the real sleep. If/when interrupts are implemented this will likely need to change.
-                sleep_seconds = sleep_nanos / 1000000000.0
-                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._sleeping)
+                sleep_seconds = delay_nanos / 1000000000.0
+                self._debug('No active tasks.  Sleeping for ', sleep_seconds, 's. \n', self._delaying)
                 time.sleep(sleep_seconds)
 
     def _run_task(self, task: Task):
         """
-        Runs a task and re-queues for the next loop if it is both (1) not complete and (2) not sleeping.
+        Runs a task and re-queues for the next loop if it is both (1) not complete and (2) not delaying.
         """
         self._current = task
         try:
             task.coroutine.send(None)
             self._debug('current', self._current)
-            # Sleep gate here, in case the current task suspended.
-            # If a sleeping task re-suspends it will have already put itself in the sleeping queue.
+            # delay gate here, in case the current task suspended.
+            # If a delaying task re-suspends it will have already put itself in the delaying queue.
             if self._current is not None:
                 self._tasks.append(task)
         except StopIteration:
@@ -314,15 +313,15 @@ class Loop:
         finally:
             self._current = None
 
-    async def _sleep_until_nanos(self, target_run_nanos):
+    async def _delay_until_nanos(self, target_run_nanos):
         """
-        From within a coroutine, sleeps until the target time.monotonic_ns
+        From within a coroutine, delays until the target time.monotonic_ns
         Returns the thing to await
         """
-        assert self._current is not None, 'You can only sleep from within a task'
-        self._sleeping.append(Sleeper(target_run_nanos, self._current))
-        self._sleeping.sort(key=Sleeper.resume_nanos)  # heap would be better but hey.
-        self._debug('sleeping ', self._current)
+        assert self._current is not None, 'You can only delay from within a task'
+        self._delaying.append(Delayer(target_run_nanos, self._current))
+        self._delaying.sort(key=Delayer.resume_nanos)  # heap would be better but hey.
+        self._debug('delaying ', self._current)
         self._current = None
         # Pretty subtle here.  This yields once, then it continues next time the task scheduler executes it.
         # The async function is parked at this point.
