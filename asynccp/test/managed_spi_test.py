@@ -1,7 +1,7 @@
 from unittest import TestCase
 
-from tasko.managed_spi import ManagedSpi
-from tasko import Loop
+from asynccp.managed_spi import ManagedSpi
+from asynccp import Loop
 
 
 # This is a terrible pattern, used only for tests
@@ -76,7 +76,7 @@ class TestManagedSpi(TestCase):
         loop.add_task(read_sensor())
         loop.add_task(update_screen())
 
-        # would just use tasko.add_task() and tasko.run() but for test let's manually step it through
+        # would just use asynccp.add_task() and asynccp.run() but for test let's manually step it through
         # loop.run()
 
         # They didn't run yet

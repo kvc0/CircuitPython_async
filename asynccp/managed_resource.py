@@ -1,4 +1,4 @@
-import tasko
+import asynccp
 
 
 class ManagedResource:
@@ -10,7 +10,7 @@ class ManagedResource:
 
     A ManagedResource instance should be shared among all users of `resource`.
     """
-    def __init__(self, resource, on_acquire=lambda *args, **kwargs: None, on_release=lambda *args, **kwargs: None, loop=tasko.get_loop()):
+    def __init__(self, resource, on_acquire=lambda *args, **kwargs: None, on_release=lambda *args, **kwargs: None, loop=asynccp.get_loop()):
         """
         :param resource: The resource you want to manage access to (e.g., a busio.SPI)
         :param on_acquire: function(*args, **kwargs) => void  acquires your singleton resource (CS pin low or something)
@@ -35,7 +35,7 @@ class ManagedResource:
             # queue up for access to the resource later
             await_handle, resume_fn = self._loop.suspend()
             self._ownership_queue.append(resume_fn)
-            # This leverages the suspend() feature in tasko; this current coroutine is not considered again until
+            # This leverages the suspend() feature in asynccp; this current coroutine is not considered again until
             # the owning job is complete and __aexit__s below.  This keeps waiting handles as cheap as possible.
             await await_handle
         self._owned = True

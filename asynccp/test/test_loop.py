@@ -1,10 +1,9 @@
-import tasko.loop
-from tasko.loop import _yield_once, set_time_provider
+from asynccp.loop import _yield_once, set_time_provider
 import time
 from unittest import TestCase
 
-from tasko import Loop
-from tasko.tasko_time import Duration
+from asynccp import Loop
+from asynccp.time import Duration
 
 
 class TestLoop(TestCase):
@@ -19,13 +18,13 @@ class TestLoop(TestCase):
         loop._step()
         self.assertTrue(ran)
 
-    def test_sleep(self):
+    def test_delay(self):
         loop = Loop()
         complete = False
 
         async def foo():
             nonlocal complete
-            await loop.sleep(0.1)
+            await loop.delay(0.1)
             complete = True
         loop.add_task(foo())
         start = time.monotonic()

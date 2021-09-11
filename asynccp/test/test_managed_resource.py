@@ -1,7 +1,7 @@
 from unittest import TestCase
 
-from tasko.managed_resource import ManagedResource
-from tasko import Loop
+from asynccp.managed_resource import ManagedResource
+from asynccp import Loop
 
 
 class Resource:
