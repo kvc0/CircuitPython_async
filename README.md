@@ -13,6 +13,9 @@ having a hitch in your app OR manually interleaving tasks and tracking their sta
 Instead of blocking with `time.sleep()` you'll `await asynccp.delay()` to let the microcontroller work on other
 things.
 
+The `async` and `await` keywords are supported in Circuitpython 6.0. They may be unavailable on your m0
+microcontroller because of flash space.
+
 ## Examples
 ### Plain synchronous loop task with async support
 ```python
@@ -184,8 +187,3 @@ asynccp.schedule(Duration.of_milliseconds(10), coroutine_function=rotary.loop)
 asynccp.run()
 # ----------  asynccp wiring ends here  ---------- #
 ```
-
-
-## Want to try it out on your microcontroller?
-Cool!  The `async` and `await` keywords are supported in Circuitpython 6.0.  Unless you are from the future you will
-need to update your microcontroller.  Also, it may be unavailable on your m0 microcontroller because of flash space.
