@@ -59,10 +59,10 @@ class ScheduledTask:
     def change_rate(self, frequency):
         """ Update the task rate to a new frequency. Float hz or asynccp.time.Duration interval """
         if isinstance(frequency, asynccp.time.Duration):
-            hz = frequency.as_frequency()
+            self._nanoseconds_per_invocation = frequency.as_nanoseconds()
         else:
             hz = frequency
-        self._nanoseconds_per_invocation = (1 / hz) * 1000000000
+            self._nanoseconds_per_invocation = 1000000000 / hz
 
     def stop(self):
         """ Stop the task (does not interrupt a currently running task) """
